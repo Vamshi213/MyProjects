@@ -1,9 +1,11 @@
 import os
 import uuid
 import hashlib
+import time
 import concurrent.futures
 from datetime import datetime
 from pathlib import Path
+from threading import Lock
 
 import bleach
 from flask import Flask, jsonify, render_template, request, send_from_directory
@@ -30,6 +32,28 @@ csrf = CSRFProtect(app)
 
 Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
 
+# ── Search cache (in-memory, TTL = 5 min) ────────────────────────────────────
+# Avoids re-hitting all 5 external APIs for repeated/identical queries.
+_cache: dict[str, tuple[float, list]] = {}
+_cache_lock = Lock()
+_CACHE_TTL = 300  # seconds
+
+
+def _cache_get(key: str) -> list | None:
+    with _cache_lock:
+        entry = _cache.get(key)
+        if entry and (time.time() - entry[0]) < _CACHE_TTL:
+            return entry[1]
+        if entry:
+            del _cache[key]
+    return None
+
+
+def _cache_set(key: str, value: list) -> None:
+    with _cache_lock:
+        _cache[key] = (time.time(), value)
+
+
 # ── Job sources ──────────────────────────────────────────────────────────────
 
 def get_sources():
@@ -37,13 +61,19 @@ def get_sources():
         RemoteOKSource(),
         TheMuseSource(),
         ArbeitnowSource(),
-        # Adzuna: uses live API when keys are set, demo data otherwise
         AdzunaSource(
             app_id=app.config["ADZUNA_APP_ID"],
             api_key=app.config["ADZUNA_API_KEY"],
             country=app.config["ADZUNA_COUNTRY"],
         ),
         HackerNewsSource(),
+    ]
+
+
+def _source_meta():
+    return [
+        {"name": s.name, "display_name": s.display_name, "logo_color": s.logo_color}
+        for s in get_sources()
     ]
 
 
@@ -63,11 +93,47 @@ def allowed_file(filename: str) -> bool:
     )
 
 
+def _build_stats() -> dict:
+    total_saved = db.session.execute(select(func.count(SavedJob.id))).scalar_one()
+    by_status_rows = db.session.execute(
+        select(SavedJob.status, func.count(SavedJob.id)).group_by(SavedJob.status)
+    ).all()
+    recent_searches = db.session.execute(
+        select(SearchHistory).order_by(SearchHistory.created_at.desc()).limit(10)
+    ).scalars().all()
+    active_resume = db.session.execute(
+        select(Resume).where(Resume.is_active == True)  # noqa: E712
+    ).scalar_one_or_none()
+    return {
+        "total_saved": total_saved,
+        "by_status": {s: c for s, c in by_status_rows},
+        "recent_searches": [
+            {"query": sh.query, "results": sh.results_count}
+            for sh in recent_searches
+        ],
+        "active_resume": active_resume.to_dict() if active_resume else None,
+    }
+
+
 # ── Routes ───────────────────────────────────────────────────────────────────
 
 @app.route("/")
 def index():
     return render_template("index.html")
+
+
+# ─── Bootstrap – one call to hydrate the entire UI on load ───────────────────
+
+@app.route("/api/bootstrap")
+def bootstrap():
+    """
+    Single endpoint the frontend calls on startup.
+    Returns sources + stats + active resume in one round-trip.
+    """
+    return jsonify({
+        "sources": _source_meta(),
+        "stats": _build_stats(),
+    })
 
 
 # ─── Job Search ──────────────────────────────────────────────────────────────
@@ -84,6 +150,15 @@ def search_jobs():
     if len(query) > 200:
         return jsonify({"error": "Query too long"}), 400
 
+    # Cache key encodes all search dimensions
+    cache_key = hashlib.md5(
+        f"{query}|{location}|{sources_param}|{page}".encode()
+    ).hexdigest()
+
+    cached = _cache_get(cache_key)
+    if cached is not None:
+        return jsonify({"jobs": cached, "total": len(cached), "query": query, "cached": True})
+
     active_sources = get_sources()
     if sources_param:
         wanted = set(sources_param.split(","))
@@ -97,15 +172,16 @@ def search_jobs():
         except Exception:
             return []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as pool:
+    # All sources fetched in parallel – single wait, not sequential calls
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(active_sources)) as pool:
         futures = {pool.submit(fetch, src): src.name for src in active_sources}
         for fut in concurrent.futures.as_completed(futures, timeout=15):
             all_jobs.extend(fut.result())
 
-    # If all live sources returned nothing, serve the full demo dataset
     if not all_jobs:
         all_jobs = search_demo(query, location)
 
+    # Deduplicate by title+company hash
     seen: set[str] = set()
     unique: list[dict] = []
     for job in all_jobs:
@@ -116,6 +192,8 @@ def search_jobs():
             seen.add(key)
             unique.append(job)
 
+    _cache_set(cache_key, unique)
+
     try:
         sh = SearchHistory(query=query, location=location, results_count=len(unique))
         db.session.add(sh)
@@ -123,16 +201,12 @@ def search_jobs():
     except Exception:
         db.session.rollback()
 
-    return jsonify({"jobs": unique, "total": len(unique), "query": query})
+    return jsonify({"jobs": unique, "total": len(unique), "query": query, "cached": False})
 
 
 @app.route("/api/jobs/sources")
 def list_sources():
-    sources = get_sources()
-    return jsonify(
-        [{"name": s.name, "display_name": s.display_name, "logo_color": s.logo_color}
-         for s in sources]
-    )
+    return jsonify(_source_meta())
 
 
 # ─── Saved Jobs ──────────────────────────────────────────────────────────────
@@ -233,9 +307,7 @@ def upload_resume():
     file.save(save_path)
     file_size = os.path.getsize(save_path)
 
-    # Deactivate existing
     db.session.execute(update(Resume).values(is_active=False))
-
     resume = Resume(
         filename=unique_name,
         original_name=original_name,
@@ -283,35 +355,11 @@ def download_resume(resume_id: int):
     )
 
 
-# ─── Stats ───────────────────────────────────────────────────────────────────
+# ─── Stats (still available standalone for refresh) ──────────────────────────
 
 @app.route("/api/stats")
 def get_stats():
-    total_saved = db.session.execute(
-        select(func.count(SavedJob.id))
-    ).scalar_one()
-
-    by_status_rows = db.session.execute(
-        select(SavedJob.status, func.count(SavedJob.id)).group_by(SavedJob.status)
-    ).all()
-
-    recent_searches = db.session.execute(
-        select(SearchHistory).order_by(SearchHistory.created_at.desc()).limit(10)
-    ).scalars().all()
-
-    active_resume = db.session.execute(
-        select(Resume).where(Resume.is_active == True)  # noqa: E712
-    ).scalar_one_or_none()
-
-    return jsonify({
-        "total_saved": total_saved,
-        "by_status": {s: c for s, c in by_status_rows},
-        "recent_searches": [
-            {"query": sh.query, "results": sh.results_count}
-            for sh in recent_searches
-        ],
-        "active_resume": active_resume.to_dict() if active_resume else None,
-    })
+    return jsonify(_build_stats())
 
 
 # ─── Bootstrap DB ────────────────────────────────────────────────────────────

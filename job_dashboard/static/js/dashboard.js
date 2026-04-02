@@ -1,20 +1,21 @@
 /* ─────────────────────────────────────────────────────
    Job Hunt Dashboard – Main JS
+   Single /api/bootstrap call on load; search results cached server-side.
    ───────────────────────────────────────────────────── */
 
 const API = {
-  search:    (q, loc, sources) => `/api/jobs/search?q=${enc(q)}&location=${enc(loc)}&sources=${enc(sources)}`,
-  sources:   () => `/api/jobs/sources`,
-  saveJob:   () => `/api/jobs/save`,
-  savedJobs: (status) => `/api/jobs/saved${status ? `?status=${status}` : ''}`,
-  updateJob: (id) => `/api/jobs/saved/${id}`,
-  deleteJob: (id) => `/api/jobs/saved/${id}`,
-  resumes:   () => `/api/resumes`,
-  upload:    () => `/api/resumes/upload`,
-  activateR: (id) => `/api/resumes/${id}/activate`,
-  deleteR:   (id) => `/api/resumes/${id}`,
-  downloadR: (id) => `/api/resumes/${id}/download`,
-  stats:     () => `/api/stats`,
+  bootstrap:  () => `/api/bootstrap`,
+  search:     (q, loc, sources) => `/api/jobs/search?q=${enc(q)}&location=${enc(loc)}&sources=${enc(sources)}`,
+  saveJob:    () => `/api/jobs/save`,
+  savedJobs:  (status) => `/api/jobs/saved${status ? `?status=${status}` : ''}`,
+  updateJob:  (id) => `/api/jobs/saved/${id}`,
+  deleteJob:  (id) => `/api/jobs/saved/${id}`,
+  resumes:    () => `/api/resumes`,
+  upload:     () => `/api/resumes/upload`,
+  activateR:  (id) => `/api/resumes/${id}/activate`,
+  deleteR:    (id) => `/api/resumes/${id}`,
+  downloadR:  (id) => `/api/resumes/${id}/download`,
+  stats:      () => `/api/stats`,
 };
 
 const enc = encodeURIComponent;
@@ -79,16 +80,26 @@ const state = {
   currentJob: null,
 };
 
-/* ── Source Chips ── */
-async function loadSources() {
+/* ── Bootstrap – ONE request to seed entire UI ── */
+async function bootstrap() {
   try {
-    const data = await apiFetch(API.sources());
-    state.sources = data;
-    state.activeSources = new Set(data.map(s => s.name));
+    const data = await apiFetch(API.bootstrap());
+    state.sources = data.sources || [];
+    state.activeSources = new Set(state.sources.map(s => s.name));
+    state.stats = data.stats || {};
     renderSourceChips();
-  } catch (_) {}
+    renderStats(state.stats);
+    renderPipeline(state.stats);
+    renderActiveResume(state.stats.active_resume);
+    renderSearchHistory();
+    // Update saved badge
+    document.getElementById('saved-badge').textContent = state.stats.total_saved || 0;
+  } catch (e) {
+    toast('Could not load dashboard data: ' + e.message, 'error');
+  }
 }
 
+/* ── Source Chips ── */
 function renderSourceChips() {
   const c = document.getElementById('source-chips');
   c.innerHTML = state.sources.map(s => `
@@ -135,10 +146,12 @@ async function searchJobs() {
     const data = await apiFetch(API.search(q, loc, sources));
     state.jobs = data.jobs || [];
     renderJobs();
-    countEl.textContent = `${state.jobs.length} results`;
+    const cacheNote = data.cached ? ' (cached)' : '';
+    countEl.textContent = `${state.jobs.length} results${cacheNote}`;
     if (state.jobs.length === 0) toast('No jobs found. Try different keywords.', 'info');
-    else toast(`Found ${state.jobs.length} jobs across ${state.activeSources.size} sources`, 'success');
+    else toast(`Found ${state.jobs.length} jobs across ${state.activeSources.size} sources${cacheNote}`, 'success');
     updateSearchHistory(q);
+    renderSearchHistory();
   } catch (e) {
     grid.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠</div><h3>Search failed</h3><p>${e.message}</p></div>`;
     toast(e.message, 'error');
@@ -195,7 +208,9 @@ async function saveJob(job) {
   try {
     await apiFetch(API.saveJob(), { method: 'POST', body: JSON.stringify(job) });
     toast(`"${job.title}" saved!`, 'success');
-    loadDashboardStats();
+    // Refresh badge without a full stats reload
+    const badge = document.getElementById('saved-badge');
+    badge.textContent = parseInt(badge.textContent || '0') + 1;
   } catch (e) {
     toast(e.message, e.message.includes('Already') ? 'info' : 'error');
   }
@@ -260,7 +275,9 @@ function renderKanban() {
         <div class="col-count">${byStatus[col.key].length}</div>
       </div>
       <div class="kanban-cards" id="col-${col.key}">
-        ${byStatus[col.key].length === 0 ? '<div style="color:var(--text-muted);font-size:12px;padding:8px 4px">No jobs here yet</div>' : ''}
+        ${byStatus[col.key].length === 0
+          ? '<div style="color:var(--text-muted);font-size:12px;padding:8px 4px">No jobs here yet</div>'
+          : ''}
         ${byStatus[col.key].map(j => `
           <div class="kanban-card" data-id="${j.id}" onclick="openSavedJobModal(${j.id})">
             <div class="kc-title">${esc(j.title)}</div>
@@ -298,7 +315,7 @@ async function updateSavedJobStatus() {
     toast('Job updated!', 'success');
     closeModal('saved-modal');
     loadSavedJobs();
-    loadDashboardStats();
+    refreshStats();
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -311,7 +328,7 @@ async function deleteSavedJob() {
     toast('Job removed', 'success');
     closeModal('saved-modal');
     loadSavedJobs();
-    loadDashboardStats();
+    refreshStats();
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -341,7 +358,9 @@ function renderResumes() {
         <div class="resume-name">${esc(r.original_name)}</div>
         <div class="resume-meta">${formatBytes(r.file_size)} • Uploaded ${formatDate(r.created_at)}</div>
       </div>
-      ${r.is_active ? '<span class="active-badge">Active</span>' : `<button class="btn btn-secondary btn-sm" onclick="activateResume(${r.id})">Set Active</button>`}
+      ${r.is_active
+        ? '<span class="active-badge">Active</span>'
+        : `<button class="btn btn-secondary btn-sm" onclick="activateResume(${r.id})">Set Active</button>`}
       <a href="${API.downloadR(r.id)}" class="btn btn-secondary btn-sm" download>⬇ Download</a>
       <button class="btn btn-danger btn-sm" onclick="deleteResume(${r.id})">🗑</button>
     </div>
@@ -364,17 +383,19 @@ async function uploadResume(file) {
       body: form,
     });
     if (!res.ok) { const e = await res.json(); throw new Error(e.error || 'Upload failed'); }
+    const data = await res.json();
     toast('Resume uploaded!', 'success');
     loadResumes();
-    loadDashboardStats();
+    renderActiveResume(data.resume);
   } catch (e) { toast(e.message, 'error'); }
 }
 
 async function activateResume(id) {
   try {
-    await apiFetch(API.activateR(id), { method: 'PATCH' });
+    const data = await apiFetch(API.activateR(id), { method: 'PATCH' });
     toast('Resume set as active', 'success');
     loadResumes();
+    renderActiveResume(data.resume);
   } catch (e) { toast(e.message, 'error'); }
 }
 
@@ -389,17 +410,23 @@ async function deleteResume(id) {
 
 /* ── Dashboard ── */
 async function loadDashboard() {
-  await loadDashboardStats();
+  // Stats already loaded by bootstrap; just re-render from state
+  if (state.stats) {
+    renderStats(state.stats);
+    renderPipeline(state.stats);
+    renderActiveResume(state.stats.active_resume);
+  }
   renderSearchHistory();
 }
 
-async function loadDashboardStats() {
+async function refreshStats() {
   try {
     const data = await apiFetch(API.stats());
     state.stats = data;
     renderStats(data);
     renderPipeline(data);
     renderActiveResume(data.active_resume);
+    document.getElementById('saved-badge').textContent = data.total_saved || 0;
   } catch (_) {}
 }
 
@@ -421,7 +448,7 @@ function renderPipeline(data) {
   bars.innerHTML = cols.map((c, i) => `
     <div class="pipeline-bar" style="height:${Math.max(8, (vals[i]/max)*100)}%;background:${c.color}" title="${c.label}: ${vals[i]}"></div>
   `).join('');
-  labels.innerHTML = cols.map((c, i) => `<span style="flex:1;text-align:center;font-size:10px;color:var(--text-muted)">${c.label}</span>`).join('');
+  labels.innerHTML = cols.map(c => `<span style="flex:1;text-align:center;font-size:10px;color:var(--text-muted)">${c.label}</span>`).join('');
 }
 
 function renderActiveResume(resume) {
@@ -462,7 +489,7 @@ function quickSearch(q) {
 }
 
 /* ── Modal helpers ── */
-function openModal(id) { document.getElementById(id)?.classList.add('open'); }
+function openModal(id)  { document.getElementById(id)?.classList.add('open'); }
 function closeModal(id) { document.getElementById(id)?.classList.remove('open'); }
 
 /* ── Utility ── */
@@ -506,7 +533,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.querySelector('.sidebar').classList.toggle('open');
   });
 
-  // Search form
+  // Search
   document.getElementById('search-btn').addEventListener('click', searchJobs);
   document.getElementById('search-query').addEventListener('keydown', e => { if (e.key === 'Enter') searchJobs(); });
 
@@ -518,20 +545,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     btn.addEventListener('click', () => btn.closest('.modal-overlay').classList.remove('open'));
   });
 
-  // Saved job modal
+  // Saved job modal actions
   document.getElementById('update-job-btn').addEventListener('click', updateSavedJobStatus);
   document.getElementById('delete-job-btn').addEventListener('click', deleteSavedJob);
 
-  // Save job from modal
+  // Save job from detail modal
   document.getElementById('modal-save-btn').addEventListener('click', () => {
     if (state.currentJob) saveJob(state.currentJob);
     closeModal('job-modal');
   });
 
-  // Resume upload zone
+  // Resume drag-and-drop upload
   const zone = document.getElementById('upload-zone');
   const fileInput = document.getElementById('resume-file-input');
-
   zone.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', e => { if (e.target.files[0]) uploadResume(e.target.files[0]); });
   zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('drag-over'); });
@@ -539,17 +565,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   zone.addEventListener('drop', e => {
     e.preventDefault();
     zone.classList.remove('drag-over');
-    const file = e.dataTransfer.files[0];
-    if (file) uploadResume(file);
+    if (e.dataTransfer.files[0]) uploadResume(e.dataTransfer.files[0]);
   });
 
-  // Quick search from dashboard
+  // Quick-search dashboard buttons
   document.querySelectorAll('.quick-search-btn').forEach(btn => {
     btn.addEventListener('click', () => quickSearch(btn.dataset.q));
   });
 
-  // Load sources & dashboard
-  await loadSources();
-  loadDashboard();
+  // ── Single bootstrap call – seeds sources, stats, resume in one hit ──
+  await bootstrap();
   navigate('dashboard');
 });

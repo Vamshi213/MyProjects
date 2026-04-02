@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  web:
+    build: .
+    ports:
+      - "5000:5000"
+    volumes:
+      # Persist SQLite database and uploaded resumes across restarts
+      - ./instance:/app/instance
+      - ./static/uploads:/app/static/uploads
+    environment:
+      - FLASK_ENV=production
+      - SECRET_KEY=${SECRET_KEY:-change-me-in-production}
+      # Optional: add Adzuna keys for live job results
+      - ADZUNA_APP_ID=${ADZUNA_APP_ID:-}
+      - ADZUNA_API_KEY=${ADZUNA_API_KEY:-}
+      - ADZUNA_COUNTRY=${ADZUNA_COUNTRY:-us}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/api/bootstrap')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
