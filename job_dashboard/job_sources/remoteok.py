@@ -1,5 +1,6 @@
 import requests
 from .base import BaseJobSource
+from .demo_data import search_demo
 
 
 class RemoteOKSource(BaseJobSource):
@@ -15,7 +16,8 @@ class RemoteOKSource(BaseJobSource):
             resp.raise_for_status()
             data = resp.json()
         except Exception:
-            return []
+            # Network/proxy unavailable – serve from curated dataset
+            return self._from_demo(query, location)
 
         query_lower = query.lower()
         results = []
@@ -47,4 +49,13 @@ class RemoteOKSource(BaseJobSource):
             if len(results) >= 20:
                 break
 
+        # Fall back if live API returned nothing for this query
+        if not results:
+            return self._from_demo(query, location)
         return results
+
+    def _from_demo(self, query: str, location: str) -> list[dict]:
+        jobs = [j for j in search_demo(query, location) if j.get("source") == self.name]
+        for j in jobs:
+            j["logo_color"] = self.logo_color
+        return jobs

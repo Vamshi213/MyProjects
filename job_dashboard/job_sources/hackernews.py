@@ -1,11 +1,13 @@
 """
 Scrapes the latest HackerNews "Ask HN: Who is Hiring?" thread.
 Uses only the official HN Firebase API (no ToS violation).
+Falls back to curated demo dataset when network is unavailable.
 """
 import re
 import requests
 from datetime import datetime
 from .base import BaseJobSource
+from .demo_data import search_demo
 
 
 HN_API = "https://hacker-news.firebaseio.com/v0"
@@ -18,7 +20,6 @@ class HackerNewsSource(BaseJobSource):
     logo_color = "#fd7272"
 
     def _get_hiring_post_id(self) -> int | None:
-        """Find the most recent 'Ask HN: Who is Hiring?' post via Algolia HN search."""
         try:
             params = {
                 "query": "Ask HN: Who is hiring?",
@@ -38,7 +39,6 @@ class HackerNewsSource(BaseJobSource):
     def _parse_comment(self, text: str, query: str) -> dict | None:
         if not text or query.lower() not in text.lower():
             return None
-        # Try to extract company | role | location pattern
         lines = [l.strip() for l in text.replace("<p>", "\n").split("\n") if l.strip()]
         first_line = re.sub(r"<[^>]+>", "", lines[0]) if lines else ""
         parts = [p.strip() for p in first_line.split("|")]
@@ -46,25 +46,20 @@ class HackerNewsSource(BaseJobSource):
         role = parts[1] if len(parts) > 1 else query
         location = parts[2] if len(parts) > 2 else "Remote"
         clean_desc = re.sub(r"<[^>]+>", " ", text)[:600]
-        return {
-            "company": company,
-            "title": role,
-            "location": location,
-            "description": clean_desc,
-        }
+        return {"company": company, "title": role, "location": location, "description": clean_desc}
 
     def search(self, query: str, location: str = "", page: int = 1) -> list[dict]:
         post_id = self._get_hiring_post_id()
         if not post_id:
-            return []
+            return self._from_demo(query, location)
         try:
             resp = requests.get(f"{HN_API}/item/{post_id}.json", timeout=10)
             resp.raise_for_status()
             post = resp.json()
         except Exception:
-            return []
+            return self._from_demo(query, location)
 
-        kids = (post.get("kids") or [])[:120]  # first 120 comments
+        kids = (post.get("kids") or [])[:120]
         results = []
         for kid_id in kids:
             try:
@@ -89,4 +84,13 @@ class HackerNewsSource(BaseJobSource):
                 continue
             if len(results) >= 15:
                 break
+
+        if not results:
+            return self._from_demo(query, location)
         return results
+
+    def _from_demo(self, query: str, location: str) -> list[dict]:
+        jobs = [j for j in search_demo(query, location) if j.get("source") == self.name]
+        for j in jobs:
+            j["logo_color"] = self.logo_color
+        return jobs

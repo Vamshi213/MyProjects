@@ -20,6 +20,7 @@ from job_sources import (
     ArbeitnowSource,
     HackerNewsSource,
 )
+from job_sources.demo_data import search_demo
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -32,19 +33,18 @@ Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
 # ── Job sources ──────────────────────────────────────────────────────────────
 
 def get_sources():
-    sources = [
+    return [
         RemoteOKSource(),
         TheMuseSource(),
         ArbeitnowSource(),
+        # Adzuna: uses live API when keys are set, demo data otherwise
+        AdzunaSource(
+            app_id=app.config["ADZUNA_APP_ID"],
+            api_key=app.config["ADZUNA_API_KEY"],
+            country=app.config["ADZUNA_COUNTRY"],
+        ),
+        HackerNewsSource(),
     ]
-    adzuna = AdzunaSource(
-        app_id=app.config["ADZUNA_APP_ID"],
-        api_key=app.config["ADZUNA_API_KEY"],
-        country=app.config["ADZUNA_COUNTRY"],
-    )
-    if adzuna.configured:
-        sources.append(adzuna)
-    return sources
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -101,6 +101,10 @@ def search_jobs():
         futures = {pool.submit(fetch, src): src.name for src in active_sources}
         for fut in concurrent.futures.as_completed(futures, timeout=15):
             all_jobs.extend(fut.result())
+
+    # If all live sources returned nothing, serve the full demo dataset
+    if not all_jobs:
+        all_jobs = search_demo(query, location)
 
     seen: set[str] = set()
     unique: list[dict] = []

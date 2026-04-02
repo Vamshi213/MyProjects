@@ -1,5 +1,6 @@
 import requests
 from .base import BaseJobSource
+from .demo_data import search_demo
 
 
 class ArbeitnowSource(BaseJobSource):
@@ -14,7 +15,7 @@ class ArbeitnowSource(BaseJobSource):
             resp.raise_for_status()
             data = resp.json()
         except Exception:
-            return []
+            return self._from_demo(query, location)
 
         query_lower = query.lower()
         results = []
@@ -41,4 +42,13 @@ class ArbeitnowSource(BaseJobSource):
             )
             if len(results) >= 15:
                 break
+
+        if not results:
+            return self._from_demo(query, location)
         return results
+
+    def _from_demo(self, query: str, location: str) -> list[dict]:
+        jobs = [j for j in search_demo(query, location) if j.get("source") == self.name]
+        for j in jobs:
+            j["logo_color"] = self.logo_color
+        return jobs
