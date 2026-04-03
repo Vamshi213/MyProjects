@@ -22,8 +22,12 @@ from job_sources import (
     AdzunaSource,
     ArbeitnowSource,
     HackerNewsSource,
+    RemotiveSource,
+    JobicySource,
+    WeWorkRemotelySource,
 )
 from job_sources.demo_data import search_demo
+from resume_analyzer import parse_resume, score_resume, generate_suggestions
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -68,6 +72,9 @@ def get_sources():
             country=app.config["ADZUNA_COUNTRY"],
         ),
         HackerNewsSource(),
+        RemotiveSource(),
+        JobicySource(),
+        WeWorkRemotelySource(),
     ]
 
 
@@ -354,6 +361,53 @@ def download_resume(resume_id: int):
         as_attachment=True,
         download_name=resume.original_name,
     )
+
+
+# ─── Resume Analyzer ─────────────────────────────────────────────────────────
+
+@app.route("/api/resume/analyze", methods=["POST"])
+def analyze_resume():
+    """
+    Analyze the active resume against a supplied job posting.
+    Body: { job_id, title, company, description, tags, url }
+    Returns: ATS score, recruiter score, matched/missing skills, suggestions.
+    """
+    data = request.get_json(silent=True) or {}
+
+    # Get active resume
+    active = db.session.execute(
+        select(Resume).where(Resume.is_active == True)  # noqa: E712
+    ).scalar_one_or_none()
+    if not active:
+        return jsonify({"error": "No active resume. Please upload a resume first."}), 400
+
+    # Build job dict (sanitised)
+    job = {
+        "job_id":      sanitize(data.get("job_id", "")),
+        "title":       sanitize(data.get("title", "")),
+        "company":     sanitize(data.get("company", "")),
+        "description": sanitize(data.get("description", ""))[:3000],
+        "tags":        [sanitize(t) for t in (data.get("tags") or [])],
+        "url":         sanitize(data.get("url", "")),
+    }
+    if not job["title"] and not job["description"]:
+        return jsonify({"error": "Job title or description required"}), 400
+
+    try:
+        parsed      = parse_resume(active.file_path, active.file_type)
+        if "error" in parsed:
+            return jsonify({"error": parsed["error"]}), 422
+        scores      = score_resume(parsed, job)
+        suggestions = generate_suggestions(parsed, scores, job)
+    except Exception as e:
+        return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
+
+    return jsonify({
+        "resume":      active.to_dict(),
+        "job":         job,
+        "scores":      scores,
+        "suggestions": suggestions,
+    })
 
 
 # ─── Stats (still available standalone for refresh) ──────────────────────────
