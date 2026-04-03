@@ -6,6 +6,7 @@ import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
+from typing import Dict, List, Optional, Tuple
 
 import bleach
 from flask import Flask, jsonify, render_template, request, send_from_directory
@@ -34,12 +35,12 @@ Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
 
 # ── Search cache (in-memory, TTL = 5 min) ────────────────────────────────────
 # Avoids re-hitting all 5 external APIs for repeated/identical queries.
-_cache: dict[str, tuple[float, list]] = {}
+_cache: Dict[str, Tuple[float, List]] = {}
 _cache_lock = Lock()
 _CACHE_TTL = 300  # seconds
 
 
-def _cache_get(key: str) -> list | None:
+def _cache_get(key: str) -> Optional[List]:
     with _cache_lock:
         entry = _cache.get(key)
         if entry and (time.time() - entry[0]) < _CACHE_TTL:
@@ -49,7 +50,7 @@ def _cache_get(key: str) -> list | None:
     return None
 
 
-def _cache_set(key: str, value: list) -> None:
+def _cache_set(key: str, value: List) -> None:
     with _cache_lock:
         _cache[key] = (time.time(), value)
 
@@ -79,7 +80,7 @@ def _source_meta():
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-ALLOWED_TAGS: list[str] = []
+ALLOWED_TAGS: List[str] = []
 
 
 def sanitize(text: str) -> str:
@@ -164,7 +165,7 @@ def search_jobs():
         wanted = set(sources_param.split(","))
         active_sources = [s for s in active_sources if s.name in wanted]
 
-    all_jobs: list[dict] = []
+    all_jobs: List[dict] = []
 
     def fetch(source):
         try:
@@ -183,7 +184,7 @@ def search_jobs():
 
     # Deduplicate by title+company hash
     seen: set[str] = set()
-    unique: list[dict] = []
+    unique: List[dict] = []
     for job in all_jobs:
         key = hashlib.md5(
             f"{job['title'].lower()}_{job['company'].lower()}".encode()
