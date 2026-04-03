@@ -25,6 +25,10 @@ from job_sources import (
     RemotiveSource,
     JobicySource,
     WeWorkRemotelySource,
+    LinkedInSource,
+    IndeedSource,
+    DiceSource,
+    MonsterSource,
 )
 from job_sources.demo_data import search_demo
 from resume_analyzer import parse_resume, score_resume, generate_suggestions
@@ -75,6 +79,10 @@ def get_sources():
         RemotiveSource(),
         JobicySource(),
         WeWorkRemotelySource(),
+        LinkedInSource(),
+        IndeedSource(),
+        DiceSource(),
+        MonsterSource(),
     ]
 
 
