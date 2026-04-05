@@ -6,7 +6,7 @@ import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import bleach
 from flask import Flask, jsonify, render_template, request, send_from_directory
@@ -198,7 +198,7 @@ def search_jobs():
         all_jobs = search_demo(query, location)
 
     # Deduplicate by title+company hash
-    seen: set[str] = set()
+    seen: Set[str] = set()
     unique: List[dict] = []
     for job in all_jobs:
         key = hashlib.md5(
