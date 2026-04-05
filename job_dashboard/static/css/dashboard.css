@@ -594,3 +594,152 @@ body {
 
 /* ── Input file hidden ── */
 input[type="file"] { display: none; }
+
+/* ══════════════════════════════════════════
+   RESUME ANALYZER STYLES
+══════════════════════════════════════════ */
+
+/* Score ring (SVG-based) */
+.score-ring-wrap {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+}
+.score-ring-label { font-size: 11px; color: var(--text-secondary); text-align: center; }
+.score-ring-value { font-size: 22px; font-weight: 800; }
+.score-ring-sub   { font-size: 10px; color: var(--text-muted); }
+
+/* Grade badge */
+.grade-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 56px; height: 56px;
+  border-radius: 50%;
+  font-size: 24px; font-weight: 900;
+  border: 3px solid currentColor;
+}
+
+/* Skill chips */
+.skill-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.skill-chip {
+  padding: 3px 9px;
+  border-radius: 20px;
+  font-size: 11px; font-weight: 500;
+  border: 1px solid transparent;
+}
+.skill-chip.matched  { background: rgba(63,185,80,0.12);  border-color: rgba(63,185,80,0.35);  color: #3fb950; }
+.skill-chip.missing  { background: rgba(248,81,73,0.10);  border-color: rgba(248,81,73,0.35);  color: #f85149; }
+.skill-chip.bonus    { background: rgba(88,166,255,0.10); border-color: rgba(88,166,255,0.35); color: #58a6ff; }
+.skill-chip.high-pri { background: rgba(248,81,73,0.15);  border-color: #f85149; color: #f85149; font-weight: 700; }
+.skill-chip.med-pri  { background: rgba(210,153,34,0.12); border-color: rgba(210,153,34,0.4); color: #d29922; }
+
+/* Score breakdown rows */
+.score-breakdown { display: flex; flex-direction: column; gap: 8px; }
+.breakdown-row { display: flex; align-items: center; gap: 10px; }
+.breakdown-label { font-size: 12px; color: var(--text-secondary); flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.breakdown-bar-wrap { flex: 2; height: 6px; background: var(--bg-secondary); border-radius: 3px; overflow: hidden; }
+.breakdown-bar-fill { height: 100%; border-radius: 3px; transition: width 0.7s ease; }
+.breakdown-pts { font-size: 11px; color: var(--text-muted); min-width: 36px; text-align: right; }
+
+/* Suggestion cards */
+.suggestion-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  margin-bottom: 8px;
+}
+.suggestion-card.win   { border-left: 3px solid var(--green); }
+.suggestion-card.fix   { border-left: 3px solid var(--yellow); }
+.suggestion-card.flag  { border-left: 3px solid var(--red); }
+.suggestion-card.tip   { border-left: 3px solid var(--purple); }
+.suggestion-title { font-size: 12px; font-weight: 600; margin-bottom: 4px; }
+.suggestion-body  { font-size: 11px; color: var(--text-secondary); line-height: 1.5; }
+
+/* Bullet rewrite */
+.bullet-rewrite {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 8px;
+}
+.bullet-original { font-size: 11px; color: var(--red); margin-bottom: 6px; font-style: italic; line-height: 1.5; }
+.bullet-improved { font-size: 11px; color: var(--green); font-weight: 500; line-height: 1.5; }
+.bullet-arrow    { font-size: 10px; color: var(--text-muted); margin-bottom: 4px; }
+
+/* Analyze button on job card */
+.btn-analyze {
+  background: rgba(188,140,255,0.12);
+  color: var(--purple);
+  border: 1px solid rgba(188,140,255,0.3);
+}
+.btn-analyze:hover { background: rgba(188,140,255,0.22); }
+
+/* Analysis modal wide */
+.modal-wide { max-width: 780px; }
+
+/* Tabs inside analysis modal */
+.analysis-tabs {
+  display: flex; gap: 2px;
+  background: var(--bg-secondary);
+  padding: 4px;
+  border-radius: var(--radius);
+  margin-bottom: 20px;
+}
+.analysis-tab {
+  flex: 1; padding: 7px 10px; text-align: center;
+  font-size: 12px; font-weight: 500;
+  color: var(--text-secondary);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.analysis-tab.active { background: var(--bg-card); color: var(--text-primary); }
+.analysis-panel { display: none; }
+.analysis-panel.active { display: block; }
+
+/* Score overview grid */
+.score-overview {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.score-card {
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  text-align: center;
+}
+.score-card .sc-value { font-size: 32px; font-weight: 800; line-height: 1; margin-bottom: 4px; }
+.score-card .sc-label { font-size: 11px; color: var(--text-secondary); }
+.score-card .sc-sub   { font-size: 10px; color: var(--text-muted); margin-top: 2px; }
+
+/* Top 1% tips panel */
+.tip-item {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+.tip-item:last-child { border-bottom: none; }
+.tip-num { font-size: 11px; font-weight: 700; color: var(--purple); min-width: 20px; }
+.tip-text { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+
+/* Recruiter verdict banner */
+.verdict-banner {
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  display: flex; align-items: center; gap: 12px;
+}
+.verdict-banner .vb-icon { font-size: 24px; }
+.verdict-banner .vb-title { font-size: 14px; font-weight: 700; }
+.verdict-banner .vb-sub   { font-size: 12px; opacity: 0.85; margin-top: 1px; }
+
+/* Analyze Match button on job card — animated pulse when resume loaded */
+@keyframes pulse-ring {
+  0%   { box-shadow: 0 0 0 0 rgba(188,140,255,0.4); }
+  70%  { box-shadow: 0 0 0 6px rgba(188,140,255,0); }
+  100% { box-shadow: 0 0 0 0 rgba(188,140,255,0); }
+}
+.btn-analyze.has-resume { animation: pulse-ring 2s ease-out 1; }
+

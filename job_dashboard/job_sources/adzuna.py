@@ -1,4 +1,5 @@
 import requests
+from typing import List
 from .base import BaseJobSource
 from .demo_data import search_demo
 
@@ -19,7 +20,7 @@ class AdzunaSource(BaseJobSource):
     def configured(self) -> bool:
         return bool(self.app_id and self.api_key)
 
-    def search(self, query: str, location: str = "", page: int = 1) -> list[dict]:
+    def search(self, query: str, location: str = "", page: int = 1) -> List[dict]:
         if not self.configured:
             return self._from_demo(query, location)
         params = {
@@ -64,7 +65,7 @@ class AdzunaSource(BaseJobSource):
             return self._from_demo(query, location)
         return results
 
-    def _from_demo(self, query: str, location: str) -> list[dict]:
+    def _from_demo(self, query: str, location: str) -> List[dict]:
         jobs = [j for j in search_demo(query, location) if j.get("source") == self.name]
         for j in jobs:
             j["logo_color"] = self.logo_color

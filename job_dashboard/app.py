@@ -6,6 +6,7 @@ import concurrent.futures
 from datetime import datetime
 from pathlib import Path
 from threading import Lock
+from typing import Dict, List, Optional, Tuple
 
 import bleach
 from flask import Flask, jsonify, render_template, request, send_from_directory
@@ -21,8 +22,16 @@ from job_sources import (
     AdzunaSource,
     ArbeitnowSource,
     HackerNewsSource,
+    RemotiveSource,
+    JobicySource,
+    WeWorkRemotelySource,
+    LinkedInSource,
+    IndeedSource,
+    DiceSource,
+    MonsterSource,
 )
 from job_sources.demo_data import search_demo
+from resume_analyzer import parse_resume, score_resume, generate_suggestions
 
 app = Flask(__name__)
 app.config.from_object(Config)
@@ -34,12 +43,12 @@ Path(app.config["UPLOAD_FOLDER"]).mkdir(parents=True, exist_ok=True)
 
 # ── Search cache (in-memory, TTL = 5 min) ────────────────────────────────────
 # Avoids re-hitting all 5 external APIs for repeated/identical queries.
-_cache: dict[str, tuple[float, list]] = {}
+_cache: Dict[str, Tuple[float, List]] = {}
 _cache_lock = Lock()
 _CACHE_TTL = 300  # seconds
 
 
-def _cache_get(key: str) -> list | None:
+def _cache_get(key: str) -> Optional[List]:
     with _cache_lock:
         entry = _cache.get(key)
         if entry and (time.time() - entry[0]) < _CACHE_TTL:
@@ -49,7 +58,7 @@ def _cache_get(key: str) -> list | None:
     return None
 
 
-def _cache_set(key: str, value: list) -> None:
+def _cache_set(key: str, value: List) -> None:
     with _cache_lock:
         _cache[key] = (time.time(), value)
 
@@ -67,6 +76,13 @@ def get_sources():
             country=app.config["ADZUNA_COUNTRY"],
         ),
         HackerNewsSource(),
+        RemotiveSource(),
+        JobicySource(),
+        WeWorkRemotelySource(),
+        LinkedInSource(),
+        IndeedSource(),
+        DiceSource(),
+        MonsterSource(),
     ]
 
 
@@ -79,7 +95,7 @@ def _source_meta():
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
-ALLOWED_TAGS: list[str] = []
+ALLOWED_TAGS: List[str] = []
 
 
 def sanitize(text: str) -> str:
@@ -164,7 +180,7 @@ def search_jobs():
         wanted = set(sources_param.split(","))
         active_sources = [s for s in active_sources if s.name in wanted]
 
-    all_jobs: list[dict] = []
+    all_jobs: List[dict] = []
 
     def fetch(source):
         try:
@@ -183,7 +199,7 @@ def search_jobs():
 
     # Deduplicate by title+company hash
     seen: set[str] = set()
-    unique: list[dict] = []
+    unique: List[dict] = []
     for job in all_jobs:
         key = hashlib.md5(
             f"{job['title'].lower()}_{job['company'].lower()}".encode()
@@ -353,6 +369,53 @@ def download_resume(resume_id: int):
         as_attachment=True,
         download_name=resume.original_name,
     )
+
+
+# ─── Resume Analyzer ─────────────────────────────────────────────────────────
+
+@app.route("/api/resume/analyze", methods=["POST"])
+def analyze_resume():
+    """
+    Analyze the active resume against a supplied job posting.
+    Body: { job_id, title, company, description, tags, url }
+    Returns: ATS score, recruiter score, matched/missing skills, suggestions.
+    """
+    data = request.get_json(silent=True) or {}
+
+    # Get active resume
+    active = db.session.execute(
+        select(Resume).where(Resume.is_active == True)  # noqa: E712
+    ).scalar_one_or_none()
+    if not active:
+        return jsonify({"error": "No active resume. Please upload a resume first."}), 400
+
+    # Build job dict (sanitised)
+    job = {
+        "job_id":      sanitize(data.get("job_id", "")),
+        "title":       sanitize(data.get("title", "")),
+        "company":     sanitize(data.get("company", "")),
+        "description": sanitize(data.get("description", ""))[:3000],
+        "tags":        [sanitize(t) for t in (data.get("tags") or [])],
+        "url":         sanitize(data.get("url", "")),
+    }
+    if not job["title"] and not job["description"]:
+        return jsonify({"error": "Job title or description required"}), 400
+
+    try:
+        parsed      = parse_resume(active.file_path, active.file_type)
+        if "error" in parsed:
+            return jsonify({"error": parsed["error"]}), 422
+        scores      = score_resume(parsed, job)
+        suggestions = generate_suggestions(parsed, scores, job)
+    except Exception as e:
+        return jsonify({"error": f"Analysis failed: {str(e)}"}), 500
+
+    return jsonify({
+        "resume":      active.to_dict(),
+        "job":         job,
+        "scores":      scores,
+        "suggestions": suggestions,
+    })
 
 
 # ─── Stats (still available standalone for refresh) ──────────────────────────

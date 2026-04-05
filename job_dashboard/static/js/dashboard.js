@@ -16,6 +16,7 @@ const API = {
   deleteR:    (id) => `/api/resumes/${id}`,
   downloadR:  (id) => `/api/resumes/${id}/download`,
   stats:      () => `/api/stats`,
+  analyze:    () => `/api/resume/analyze`,
 };
 
 const enc = encodeURIComponent;
@@ -171,6 +172,10 @@ function renderJobs() {
       e.stopPropagation();
       saveJob(state.jobs[i]);
     });
+    card.querySelector('.btn-analyze-match')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      analyzeJob(state.jobs[i]);
+    });
     card.addEventListener('click', () => openJobModal(state.jobs[i]));
   });
 }
@@ -198,6 +203,7 @@ function jobCardHTML(j, idx) {
     ${tags.length ? `<div class="job-tags">${tags.map(t => `<span class="job-tag">${esc(t)}</span>`).join('')}</div>` : ''}
     <div class="job-actions">
       <button class="btn btn-primary btn-sm btn-save">💾 Save</button>
+      <button class="btn btn-analyze btn-sm btn-analyze-match ${state.stats && state.stats.active_resume ? 'has-resume' : ''}">🎯 Match Score</button>
       ${j.url ? `<a href="${encodeURI(j.url)}" target="_blank" rel="noopener noreferrer" class="btn btn-secondary btn-sm" onclick="event.stopPropagation()">🔗 Apply</a>` : ''}
     </div>
   </div>`;
@@ -519,6 +525,250 @@ function formatBytes(b) {
   if (b < 1024) return `${b} B`;
   if (b < 1024*1024) return `${(b/1024).toFixed(1)} KB`;
   return `${(b/(1024*1024)).toFixed(1)} MB`;
+}
+
+/* ══════════════════════════════════════════
+   RESUME ANALYZER
+══════════════════════════════════════════ */
+
+async function analyzeJob(job) {
+  if (!state.stats || !state.stats.active_resume) {
+    toast('Upload a resume first to get your match score', 'error');
+    navigate('resume');
+    return;
+  }
+  document.getElementById('analysis-modal-title').textContent = `Match Analysis — ${job.title}`;
+  document.getElementById('analysis-modal-sub').textContent = `${job.company} · Acting as senior recruiter`;
+  document.getElementById('analysis-modal-body').innerHTML =
+    '<div class="loading-spinner"><div class="spinner"></div><span>Analysing resume vs job description…</span></div>';
+  openModal('analysis-modal');
+
+  try {
+    const data = await apiFetch(API.analyze(), {
+      method: 'POST',
+      body: JSON.stringify(job),
+    });
+    renderAnalysis(data);
+  } catch (e) {
+    document.getElementById('analysis-modal-body').innerHTML =
+      `<div class="empty-state"><div class="empty-icon">⚠</div><h3>Analysis failed</h3><p>${e.message}</p></div>`;
+  }
+}
+
+function renderAnalysis(data) {
+  const { scores, suggestions } = data;
+  const overall = scores.overall_score;
+  const grade   = scores.grade;
+  const ats     = scores.ats_score;
+  const rec     = scores.recruiter_score;
+
+  // Verdict colours
+  const verdictColors = {
+    'A': { bg: 'rgba(63,185,80,0.1)', border: 'rgba(63,185,80,0.4)', text: '#3fb950' },
+    'B': { bg: 'rgba(88,166,255,0.1)', border: 'rgba(88,166,255,0.4)', text: '#58a6ff' },
+    'C': { bg: 'rgba(210,153,34,0.1)', border: 'rgba(210,153,34,0.4)', text: '#d29922' },
+    'D': { bg: 'rgba(227,137,59,0.1)', border: 'rgba(227,137,59,0.4)', text: '#e3893b' },
+    'F': { bg: 'rgba(248,81,73,0.1)', border: 'rgba(248,81,73,0.4)', text: '#f85149' },
+  };
+  const vc = verdictColors[grade.letter] || verdictColors['C'];
+
+  const body = document.getElementById('analysis-modal-body');
+  body.innerHTML = `
+
+  <!-- Verdict Banner -->
+  <div class="verdict-banner" style="background:${vc.bg};border:1px solid ${vc.border}">
+    <div class="grade-badge" style="color:${vc.text};border-color:${vc.text}">${grade.letter}</div>
+    <div>
+      <div class="vb-title" style="color:${vc.text}">${grade.label}</div>
+      <div class="vb-sub" style="color:${vc.text}">Overall: ${overall}/100 · ATS: ${ats}/100 · Recruiter: ${rec}/100</div>
+    </div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="analysis-tabs">
+    <div class="analysis-tab active" data-tab="scores">📊 Scores</div>
+    <div class="analysis-tab" data-tab="skills">🔧 Skills Gap</div>
+    <div class="analysis-tab" data-tab="bullets">✏ Rewrites</div>
+    <div class="analysis-tab" data-tab="tips">🏆 Top 1%</div>
+  </div>
+
+  <!-- PANEL: Scores -->
+  <div class="analysis-panel active" id="panel-scores">
+    <div class="score-overview">
+      ${scoreCard(overall, 'Overall Match', grade.color, 'ATS + Recruiter weighted')}
+      ${scoreCard(ats, 'ATS Score', ats >= 70 ? '#3fb950' : ats >= 50 ? '#d29922' : '#f85149', 'Keyword & format')}
+      ${scoreCard(rec, 'Recruiter Score', rec >= 70 ? '#3fb950' : rec >= 50 ? '#d29922' : '#f85149', 'Impact & depth')}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
+      <div>
+        <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text-secondary)">ATS BREAKDOWN</div>
+        <div class="score-breakdown">${renderBreakdown(scores.ats_breakdown)}</div>
+      </div>
+      <div>
+        <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text-secondary)">RECRUITER BREAKDOWN</div>
+        <div class="score-breakdown">${renderBreakdown(scores.recruiter_breakdown)}</div>
+      </div>
+    </div>
+
+    ${suggestions.quick_wins.length ? `
+    <div style="margin-top:20px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text-secondary)">⚡ QUICK WINS</div>
+      ${suggestions.quick_wins.map(w => `<div class="suggestion-card win"><div class="suggestion-body">${esc(w)}</div></div>`).join('')}
+    </div>` : ''}
+
+    ${suggestions.recruiter_red_flags.length ? `
+    <div style="margin-top:16px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--red)">🚩 RECRUITER RED FLAGS</div>
+      ${suggestions.recruiter_red_flags.map(f => `<div class="suggestion-card flag"><div class="suggestion-body">${esc(f)}</div></div>`).join('')}
+    </div>` : ''}
+  </div>
+
+  <!-- PANEL: Skills Gap -->
+  <div class="analysis-panel" id="panel-skills">
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--green)">✅ MATCHED SKILLS (${scores.matched_skills.length})</div>
+      <div class="skill-chips">
+        ${scores.matched_skills.length
+          ? scores.matched_skills.map(s => `<span class="skill-chip matched">${esc(s)}</span>`).join('')
+          : '<span style="color:var(--text-muted);font-size:12px">No matching skills detected — tailor your resume</span>'}
+      </div>
+    </div>
+
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--red)">❌ MISSING SKILLS (${scores.missing_skills.length})</div>
+      <div class="skill-chips">
+        ${scores.missing_skills.length
+          ? scores.missing_skills.map(s => `<span class="skill-chip missing">${esc(s)}</span>`).join('')
+          : '<span style="color:var(--green);font-size:12px">Great — no critical skills missing!</span>'}
+      </div>
+    </div>
+
+    ${scores.bonus_skills.length ? `
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--accent)">➕ YOUR EXTRA SKILLS</div>
+      <div class="skill-chips">
+        ${scores.bonus_skills.map(s => `<span class="skill-chip bonus">${esc(s)}</span>`).join('')}
+      </div>
+    </div>` : ''}
+
+    ${suggestions.missing_skills.length ? `
+    <div style="margin-top:16px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text-secondary)">📌 SKILLS TO ADD — PRIORITY ORDER</div>
+      ${suggestions.missing_skills.map(m => `
+        <div class="suggestion-card ${m.priority === 'high' ? 'flag' : m.priority === 'medium' ? 'fix' : 'tip'}">
+          <div class="suggestion-title">
+            <span class="skill-chip ${m.priority === 'high' ? 'high-pri' : 'med-pri'}" style="margin-right:6px">${esc(m.skill)}</span>
+            ${m.priority.toUpperCase()}
+          </div>
+          <div class="suggestion-body">${esc(m.advice)}</div>
+        </div>
+      `).join('')}
+    </div>` : ''}
+
+    ${suggestions.cert_suggestions.length ? `
+    <div style="margin-top:16px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--purple)">🎓 CERTIFICATIONS TO ADD</div>
+      ${suggestions.cert_suggestions.map(c => `<span class="skill-chip bonus" style="margin:3px">${esc(c)}</span>`).join('')}
+    </div>` : ''}
+  </div>
+
+  <!-- PANEL: Bullet Rewrites -->
+  <div class="analysis-panel" id="panel-bullets">
+    ${suggestions.power_verbs.length ? `
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--yellow)">🔄 REPLACE THESE WEAK VERBS</div>
+      <div class="skill-chips">
+        ${suggestions.power_verbs.map(v =>
+          `<span class="skill-chip missing" title="Replace with: ${esc(v.strong)}">${esc(v.weak)} → ${esc(v.strong)}</span>`
+        ).join('')}
+      </div>
+    </div>` : ''}
+
+    ${suggestions.bullet_rewrites.length ? `
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text-secondary)">✏ REWRITE THESE BULLETS</div>
+      ${suggestions.bullet_rewrites.map(b => `
+        <div class="bullet-rewrite">
+          <div class="bullet-original">Before: ${esc(b.original)}</div>
+          <div class="bullet-arrow">↓ ${esc(b.issue)}</div>
+          <div class="bullet-improved">After: ${esc(b.improved)}</div>
+        </div>
+      `).join('')}
+    </div>` : '<div style="color:var(--green);font-size:13px;padding:12px 0">No weak bullets detected — great job!</div>'}
+
+    <div>
+      <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--text-secondary)">📋 BULLET TEMPLATES FOR THIS ROLE</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-bottom:10px">Copy, fill in the [brackets], and add to your resume:</div>
+      ${(suggestions.bullet_templates || []).map(t => `
+        <div class="suggestion-card tip" style="margin-bottom:6px">
+          <div class="suggestion-body" style="font-family:monospace">${esc(t)}</div>
+        </div>
+      `).join('')}
+    </div>
+
+    ${suggestions.ats_fixes.length ? `
+    <div style="margin-top:16px">
+      <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--accent)">🤖 ATS FORMAT FIXES</div>
+      ${suggestions.ats_fixes.map(f => `<div class="suggestion-card fix"><div class="suggestion-body">${esc(f)}</div></div>`).join('')}
+    </div>` : ''}
+  </div>
+
+  <!-- PANEL: Top 1% Tips -->
+  <div class="analysis-panel" id="panel-tips">
+    <div style="margin-bottom:12px">
+      <div style="font-size:13px;font-weight:700;color:var(--purple)">Acting as Senior Recruiter — ${esc(suggestions.role_detected || 'Software Engineer')} role</div>
+      <div style="font-size:12px;color:var(--text-secondary);margin-top:4px">
+        These are the signals that separate top-1% candidates from the rest. Each one meaningfully increases your callback rate.
+      </div>
+    </div>
+    ${(suggestions.top_1_percent || []).map((tip, i) => `
+      <div class="tip-item">
+        <div class="tip-num">${i + 1}.</div>
+        <div class="tip-text">${esc(tip)}</div>
+      </div>
+    `).join('')}
+  </div>
+  `;
+
+  // Tab switching
+  body.querySelectorAll('.analysis-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      body.querySelectorAll('.analysis-tab').forEach(t => t.classList.remove('active'));
+      body.querySelectorAll('.analysis-panel').forEach(p => p.classList.remove('active'));
+      tab.classList.add('active');
+      body.querySelector('#panel-' + tab.dataset.tab)?.classList.add('active');
+    });
+  });
+}
+
+function scoreCard(value, label, color, sub) {
+  return `
+  <div class="score-card">
+    <div class="sc-value" style="color:${color}">${value}</div>
+    <div class="sc-label">${esc(label)}</div>
+    <div class="sc-sub">${esc(sub)}</div>
+    <div class="progress-bar" style="margin-top:8px">
+      <div class="progress-fill" style="width:${value}%;background:${color}"></div>
+    </div>
+  </div>`;
+}
+
+function renderBreakdown(breakdown) {
+  if (!breakdown) return '';
+  return Object.entries(breakdown).map(([key, item]) => {
+    const pct = Math.round((item.score / item.max) * 100);
+    const color = pct >= 70 ? '#3fb950' : pct >= 45 ? '#d29922' : '#f85149';
+    const label = key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    return `
+    <div class="breakdown-row" title="${esc(item.detail)}">
+      <div class="breakdown-label">${esc(label)}</div>
+      <div class="breakdown-bar-wrap">
+        <div class="breakdown-bar-fill" style="width:${pct}%;background:${color}"></div>
+      </div>
+      <div class="breakdown-pts">${item.score}/${item.max}</div>
+    </div>`;
+  }).join('');
 }
 
 /* ── Init ── */

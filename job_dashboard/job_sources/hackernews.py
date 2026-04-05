@@ -6,6 +6,8 @@ Falls back to curated demo dataset when network is unavailable.
 import re
 import requests
 from datetime import datetime
+from typing import Optional, List
+
 from .base import BaseJobSource
 from .demo_data import search_demo
 
@@ -19,7 +21,7 @@ class HackerNewsSource(BaseJobSource):
     display_name = "HN: Who's Hiring"
     logo_color = "#fd7272"
 
-    def _get_hiring_post_id(self) -> int | None:
+    def _get_hiring_post_id(self) -> Optional[int]:
         try:
             params = {
                 "query": "Ask HN: Who is hiring?",
@@ -36,7 +38,7 @@ class HackerNewsSource(BaseJobSource):
             pass
         return None
 
-    def _parse_comment(self, text: str, query: str) -> dict | None:
+    def _parse_comment(self, text: str, query: str) -> Optional[dict]:
         if not text or query.lower() not in text.lower():
             return None
         lines = [l.strip() for l in text.replace("<p>", "\n").split("\n") if l.strip()]
@@ -48,12 +50,12 @@ class HackerNewsSource(BaseJobSource):
         clean_desc = re.sub(r"<[^>]+>", " ", text)[:600]
         return {"company": company, "title": role, "location": location, "description": clean_desc}
 
-    def search(self, query: str, location: str = "", page: int = 1) -> list[dict]:
+    def search(self, query: str, location: str = "", page: int = 1) -> List[dict]:
         post_id = self._get_hiring_post_id()
         if not post_id:
             return self._from_demo(query, location)
         try:
-            resp = requests.get(f"{HN_API}/item/{post_id}.json", timeout=10)
+            resp = requests.get("{}/item/{}.json".format(HN_API, post_id), timeout=10)
             resp.raise_for_status()
             post = resp.json()
         except Exception:
@@ -63,7 +65,7 @@ class HackerNewsSource(BaseJobSource):
         results = []
         for kid_id in kids:
             try:
-                r = requests.get(f"{HN_API}/item/{kid_id}.json", timeout=5)
+                r = requests.get("{}/item/{}.json".format(HN_API, kid_id), timeout=5)
                 item = r.json()
                 parsed = self._parse_comment(item.get("text", ""), query)
                 if parsed:
@@ -75,7 +77,7 @@ class HackerNewsSource(BaseJobSource):
                             title=parsed["title"],
                             company=parsed["company"],
                             location=parsed["location"],
-                            url=f"https://news.ycombinator.com/item?id={kid_id}",
+                            url="https://news.ycombinator.com/item?id={}".format(kid_id),
                             description=parsed["description"],
                             posted_at=posted_at,
                         )
@@ -89,7 +91,7 @@ class HackerNewsSource(BaseJobSource):
             return self._from_demo(query, location)
         return results
 
-    def _from_demo(self, query: str, location: str) -> list[dict]:
+    def _from_demo(self, query: str, location: str) -> List[dict]:
         jobs = [j for j in search_demo(query, location) if j.get("source") == self.name]
         for j in jobs:
             j["logo_color"] = self.logo_color

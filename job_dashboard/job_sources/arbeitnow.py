@@ -1,4 +1,5 @@
 import requests
+from typing import List
 from .base import BaseJobSource
 from .demo_data import search_demo
 
@@ -9,7 +10,7 @@ class ArbeitnowSource(BaseJobSource):
     logo_color = "#0984e3"
     _BASE = "https://www.arbeitnow.com/api/job-board-api"
 
-    def search(self, query: str, location: str = "", page: int = 1) -> list[dict]:
+    def search(self, query: str, location: str = "", page: int = 1) -> List[dict]:
         try:
             resp = requests.get(self._BASE, params={"page": page}, timeout=10)
             resp.raise_for_status()
@@ -47,7 +48,7 @@ class ArbeitnowSource(BaseJobSource):
             return self._from_demo(query, location)
         return results
 
-    def _from_demo(self, query: str, location: str) -> list[dict]:
+    def _from_demo(self, query: str, location: str) -> List[dict]:
         jobs = [j for j in search_demo(query, location) if j.get("source") == self.name]
         for j in jobs:
             j["logo_color"] = self.logo_color
