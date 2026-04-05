@@ -2,6 +2,7 @@
 Realistic job dataset — used as fallback when external APIs are unreachable.
 All postings are modelled on real companies and real roles.
 """
+from typing import List
 
 JOBS = [
     # ── Software Engineering ──────────────────────────────────────────────
@@ -1094,7 +1095,7 @@ JOBS = [
 ]
 
 
-def search_demo(query: str, location: str = "") -> list[dict]:
+def search_demo(query: str, location: str = "") -> List[dict]:
     """
     Filter demo jobs by query and optional location.
 

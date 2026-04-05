@@ -1,4 +1,5 @@
 import requests
+from typing import List
 from .base import BaseJobSource
 from .demo_data import search_demo
 
@@ -9,7 +10,7 @@ class RemoteOKSource(BaseJobSource):
     logo_color = "#00c896"
     _BASE = "https://remoteok.com/api"
 
-    def search(self, query: str, location: str = "", page: int = 1) -> list[dict]:
+    def search(self, query: str, location: str = "", page: int = 1) -> List[dict]:
         try:
             headers = {"User-Agent": "JobDashboard/1.0 (job-hunt-tool)"}
             resp = requests.get(self._BASE, headers=headers, timeout=10)
@@ -54,7 +55,7 @@ class RemoteOKSource(BaseJobSource):
             return self._from_demo(query, location)
         return results
 
-    def _from_demo(self, query: str, location: str) -> list[dict]:
+    def _from_demo(self, query: str, location: str) -> List[dict]:
         jobs = [j for j in search_demo(query, location) if j.get("source") == self.name]
         for j in jobs:
             j["logo_color"] = self.logo_color
